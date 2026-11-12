@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TVU Go Code Pill</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  /*
+    Minimal TVU Go creator code overlay (OBS browser source, 1920x1080, transparent).
+
+      ?code=GOCASH        creator code
+      &pos=bl             bl | br | tl | tr   (corner, default bottom-left)
+      &steps=1            1 = expand into the 4 steps when the source turns on, 0 = pill only
+      &every=10           also expand every N minutes (0 = only when triggered)
+      &scale=1            size, e.g. 1.25 or 0.8
+  */
+  :root { --green: #2AC93A; --ink: #fff; --muted: rgba(255,255,255,.72); --bg: rgba(10,10,11,.88); }
+  html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: transparent;
+    font-family: Inter, "Helvetica Neue", Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+  body.preview { background: radial-gradient(circle at 30% 40%, #3b4b57, #1b2228); }
+  #hint { position: absolute; right: 48px; top: 40px; color: rgba(255,255,255,.6); font: 600 18px Inter, sans-serif; display: none; }
+  body.preview #hint { display: block; }
+
+  #wrap { position: absolute; display: flex; flex-direction: column; gap: 10px; transform-origin: left bottom; transform: scale(var(--s,1)); }
+  .bl #wrap { left: 40px; bottom: 40px; }
+  .br #wrap { right: 40px; bottom: 40px; align-items: flex-end; transform-origin: right bottom; }
+  .tl #wrap { left: 40px; top: 40px; flex-direction: column-reverse; transform-origin: left top; }
+  .tr #wrap { right: 40px; top: 40px; flex-direction: column-reverse; align-items: flex-end; transform-origin: right top; }
+
+  /* pill */
+  .pill { display: inline-flex; align-items: center; gap: 12px; height: 52px; padding: 0 22px 0 8px;
+    background: var(--bg); border: 1.5px solid rgba(42,201,58,.55); border-radius: 999px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.35); color: var(--ink); white-space: nowrap; }
+  .badge { height: 38px; padding: 0 14px; border-radius: 999px; background: var(--green); color: #061; display: flex; align-items: center;
+    font-weight: 800; font-size: 18px; letter-spacing: .6px; color: #04140a; }
+  .pill .lbl { font-size: 18px; font-weight: 600; color: var(--muted); }
+  .pill .code { font-size: 22px; font-weight: 800; letter-spacing: 1.5px; color: var(--green); }
+  .pill .free { font-size: 18px; font-weight: 600; color: var(--ink); padding-left: 12px; border-left: 1px solid rgba(255,255,255,.2); }
+  .pill.shine { animation: shine 1.6s ease; }
+  @keyframes shine { 0%,100% { box-shadow: 0 8px 24px rgba(0,0,0,.35); } 40% { box-shadow: 0 0 0 6px rgba(42,201,58,.25), 0 0 28px rgba(42,201,58,.6); } }
+
+  /* step card */
+  .card { width: 440px; background: var(--bg); border: 1px solid rgba(255,255,255,.1); border-radius: 22px;
+    box-shadow: 0 12px 30px rgba(0,0,0,.4); overflow: hidden;
+    max-height: 0; opacity: 0; transform: translateY(10px);
+    transition: max-height .5s cubic-bezier(.2,.9,.25,1), opacity .35s ease, transform .5s cubic-bezier(.2,.9,.25,1); }
+  .tl .card, .tr .card { transform: translateY(-10px); }
+  .card.open { max-height: 220px; opacity: 1; transform: none; }
+  .inner { padding: 20px 22px 18px; }
+  .top { display: flex; justify-content: space-between; align-items: center; color: var(--green); font-weight: 800; font-size: 14px; letter-spacing: 1.6px; text-transform: uppercase; }
+  .top .n { color: var(--muted); letter-spacing: 1px; }
+  .step { display: flex; gap: 16px; align-items: center; margin-top: 14px; min-height: 76px; }
+  .num { flex: none; width: 46px; height: 46px; border-radius: 50%; background: rgba(42,201,58,.16); border: 2px solid var(--green);
+    color: var(--green); font-weight: 800; font-size: 22px; display: flex; align-items: center; justify-content: center; }
+  .txt { color: var(--ink); font-size: 23px; font-weight: 700; line-height: 1.25; }
+  .txt small { display: block; color: var(--muted); font-size: 17px; font-weight: 500; margin-top: 4px; }
+  .txt .c { color: var(--green); letter-spacing: 1px; }
+  .step.in { animation: in .45s cubic-bezier(.2,.9,.25,1) both; }
+  @keyframes in { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: none; } }
+  .bar { display: flex; gap: 6px; margin-top: 14px; }
+  .bar i { flex: 1; height: 4px; border-radius: 2px; background: rgba(255,255,255,.15); overflow: hidden; position: relative; }
+  .bar i.done { background: var(--green); }
+  .bar i.now::after { content: ""; position: absolute; inset: 0; width: 0; background: var(--green); animation: fill linear forwards; animation-duration: var(--d,5s); }
+  @keyframes fill { to { width: 100%; } }
+</style>
+</head>
+<body>
+<div id="hint">Preview · click or press Space to show the steps</div>
+<div id="wrap">
+  <div class="card" id="card">
+    <div class="inner">
+      <div class="top"><span>How to get 1 month free</span><span class="n" id="n"></span></div>
+      <div class="step" id="step"><div class="num" id="num"></div><div class="txt" id="txt"></div></div>
+      <div class="bar" id="bar"></div>
+    </div>
+  </div>
+  <div class="pill" id="pill">
+    <div class="badge">TVU GO</div>
+    <span class="lbl">Code</span><span class="code" data-code></span>
+    <span class="free">1 month free</span>
+  </div>
+</div>
+<script>
+(() => {
+  const q = new URLSearchParams(location.search);
+  const CODE = (q.get('code') || 'GOCASH').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 16);
+  const POS = ['bl', 'br', 'tl', 'tr'].includes(q.get('pos')) ? q.get('pos') : 'bl';
+  const STEPS_ON = q.get('steps') !== '0';
+  const EVERY = Math.max(0, parseFloat(q.get('every') || '0') || 0);
+  const SCALE = Math.min(2, Math.max(.4, parseFloat(q.get('scale') || '1') || 1));
+
+  document.body.classList.add(POS);
+  if (!window.obsstudio) document.body.classList.add('preview');
+  document.getElementById('wrap').style.setProperty('--s', SCALE);
+  document.querySelectorAll('[data-code]').forEach(e => e.textContent = CODE);
+
+  const STEPS = [
+    { t: 'Get <b>TVU Go</b> and sign up', s: 'Free on the App Store or Google Play', d: 5 },
+    { t: 'Tap <span class="c">Have a promo code?</span>', s: 'On the plans screen', d: 5 },
+    { t: `Enter <span class="c">${CODE}</span> then tap Claim`, s: 'Your first month is free', d: 5.5 },
+    { t: 'Paste the copied code and tap <span class="c">Redeem</span>', s: 'In the App Store or Google Play', d: 6 },
+  ];
+  const card = document.getElementById('card'), pill = document.getElementById('pill');
+  const bar = document.getElementById('bar');
+  bar.innerHTML = STEPS.map(() => '<i></i>').join('');
+
+  let timers = [];
+  const later = (f, ms) => timers.push(setTimeout(f, ms));
+
+  function showStep(i) {
+    const s = STEPS[i], st = document.getElementById('step');
+    document.getElementById('n').textContent = `${i + 1} / ${STEPS.length}`;
+    document.getElementById('num').textContent = i + 1;
+    document.getElementById('txt').innerHTML = `${s.t}<small>${s.s}</small>`;
+    st.classList.remove('in'); void st.offsetWidth; st.classList.add('in');
+    [...bar.children].forEach((b, k) => {
+      b.className = k < i ? 'done' : k === i ? 'now' : '';
+      b.style.setProperty('--d', s.d + 's');
+    });
+  }
+
+  function play() {
+    timers.forEach(clearTimeout); timers = [];
+    pill.classList.remove('shine'); void pill.offsetWidth; pill.classList.add('shine');
+    if (!STEPS_ON) return;
+    let t = 0.6;
+    later(() => { showStep(0); card.classList.add('open'); }, t * 1000);
+    STEPS.forEach((s, i) => { if (i) later(() => showStep(i), t * 1000); t += s.d; });
+    later(() => card.classList.remove('open'), t * 1000);
+  }
+
+  (document.fonts ? document.fonts.ready : Promise.resolve()).then(() => {
+    play();
+    if (EVERY > 0) setInterval(play, EVERY * 60000);
+  });
+  addEventListener('keydown', e => { if (e.code === 'Space') play(); });
+  addEventListener('click', play);
+})();
+</script>
+</body>
+</html>

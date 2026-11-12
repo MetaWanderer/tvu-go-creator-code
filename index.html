@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>TVU Go Code Walkthrough</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  /*
+    TVU Go creator code walkthrough overlay (OBS browser source, 1920x1080, transparent).
+
+    URL options
+      ?code=GOCASH     creator code shown everywhere (default GOCASH)
+      &side=right      right | left  (which side of the screen the panel sits on)
+      &scale=1         shrink the whole panel, e.g. 0.8
+      &every=0         auto-replay every N minutes (0 = play once per trigger)
+      &loop=1          play forever (for testing)
+      &step=3          freeze on one step (for previews)
+
+    Trigger: OBS replays it whenever the source becomes visible
+    (tick "Refresh browser when scene becomes active" + "Shutdown source when not visible").
+    In a normal browser: click or press Space to replay.
+  */
+  :root {
+    --green: #2AC93A;
+    --green-dim: rgba(42, 201, 58, .16);
+    --ink: #F2F4F5;
+    --muted: #A3A9B0;
+    --panel: rgba(12, 12, 13, .94);
+    --line: rgba(255, 255, 255, .08);
+  }
+  html, body {
+    margin: 0; width: 1920px; height: 1080px; overflow: hidden;
+    background: transparent;
+    font-family: Inter, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* outside OBS: show a backdrop + replay hint so the page isn't blank */
+  body.preview { background: radial-gradient(circle at 30% 40%, #3b4b57, #1b2228); }
+  #hint { position: absolute; left: 56px; bottom: 48px; color: rgba(255,255,255,.7); font: 600 22px Inter, sans-serif; display: none; }
+  body.preview #hint { display: block; }
+
+  #stage { position: absolute; inset: 0; }
+  #panel {
+    position: absolute; top: 50%; right: 56px;
+    width: 900px; height: 960px;
+    transform-origin: right center;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 36px;
+    box-shadow: 0 30px 80px rgba(0,0,0,.55);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    opacity: 0;
+    transform: translate(120px, -50%) scale(var(--s, 1));
+    transition: opacity .5s ease, transform .6s cubic-bezier(.2,.9,.25,1);
+  }
+  body.left #panel { right: auto; left: 56px; transform-origin: left center; transform: translate(-120px, -50%) scale(var(--s, 1)); }
+  #panel.in { opacity: 1; transform: translate(0, -50%) scale(var(--s, 1)); }
+  body.left #panel.in { transform: translate(0, -50%) scale(var(--s, 1)); }
+
+  /* header */
+  .head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 26px 36px; border-bottom: 1px solid var(--line);
+  }
+  .logo { font-weight: 800; font-size: 30px; letter-spacing: .5px; color: var(--ink); }
+  .logo b { color: var(--green); }
+  .codechip {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--green-dim); border: 1.5px solid var(--green);
+    border-radius: 999px; padding: 9px 20px 9px 16px;
+    color: var(--ink); font-size: 20px; font-weight: 600;
+  }
+  .codechip .c { color: var(--green); font-weight: 800; letter-spacing: 1.5px; }
+  .codechip svg { width: 22px; height: 22px; }
+
+  /* body */
+  .body { flex: 1; display: flex; gap: 34px; padding: 30px 36px 30px 40px; min-height: 0; }
+  .copy { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .stepno {
+    color: var(--green); font-weight: 800; font-size: 22px; letter-spacing: 2px;
+    text-transform: uppercase; margin-top: 40px;
+  }
+  .title { color: var(--ink); font-weight: 800; font-size: 46px; line-height: 1.12; margin-top: 16px; }
+  .title .c { color: var(--green); letter-spacing: 1px; }
+  .sub { color: var(--muted); font-size: 24px; line-height: 1.45; margin-top: 22px; font-weight: 500; }
+  .sub b { color: var(--ink); font-weight: 600; }
+  .warn {
+    margin-top: 22px; padding: 14px 18px; border-radius: 14px;
+    background: rgba(255, 170, 40, .12); border: 1px solid rgba(255, 170, 40, .45);
+    color: #FFC46B; font-size: 20px; font-weight: 600; line-height: 1.4;
+    display: none;
+  }
+  .warn.on { display: block; }
+  .copy-anim > * { animation: up .55s cubic-bezier(.2,.9,.25,1) both; }
+  .copy-anim .title { animation-delay: .08s; }
+  .copy-anim .sub { animation-delay: .16s; }
+  .copy-anim .warn { animation-delay: .24s; }
+  @keyframes up { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+
+  .dots { margin-top: auto; display: flex; gap: 10px; padding-bottom: 6px; }
+  .dot { width: 34px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.14); overflow: hidden; }
+  .dot i { display: block; height: 100%; width: 0; background: var(--green); }
+  .dot.done i { width: 100%; }
+  .dot.now i { animation: fill linear forwards; animation-duration: var(--d, 6s); }
+  @keyframes fill { to { width: 100%; } }
+
+  /* phone */
+  .phone {
+    position: relative; flex: none;
+    width: 382px; height: 826px; /* 390x844 * .98 */
+    border-radius: 48px; background: #26262a; padding: 0;
+    box-shadow: 0 0 0 7px #1a1a1d, 0 0 0 8px rgba(255,255,255,.08);
+    align-self: center;
+  }
+  .screen {
+    position: absolute; inset: 0; border-radius: 46px; overflow: hidden; background: #000;
+  }
+  .frame {
+    position: absolute; left: 0; top: 0; width: 390px; height: 844px;
+    transform-origin: 0 0; transform: scale(.98);
+    opacity: 0; transition: opacity .45s ease;
+  }
+  .frame.on { opacity: 1; }
+  .frame img { position: absolute; inset: 0; width: 390px; height: 844px; display: block; }
+  .dim { position: absolute; inset: 0; background: rgba(0,0,0,.55); opacity: 0; transition: opacity .4s ease; }
+  .frame.hl .dim { opacity: 1; }
+
+  /* text patches that put the creator's code into the screenshots */
+  .patch { position: absolute; display: flex; align-items: center; white-space: nowrap; font-family: Inter, sans-serif; }
+
+  /* highlight */
+  .hl-box {
+    position: absolute; border: 3px solid var(--green); border-radius: 12px;
+    box-shadow: 0 0 0 9999px rgba(0,0,0,0), 0 0 22px rgba(42,201,58,.65);
+    opacity: 0; transform: scale(1.12);
+    transition: opacity .35s ease, transform .45s cubic-bezier(.2,.9,.25,1);
+  }
+  .hl-box.on { opacity: 1; transform: scale(1); animation: pulse 1.4s ease-in-out .45s infinite; }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 18px rgba(42,201,58,.55); } 50% { box-shadow: 0 0 34px rgba(42,201,58,.95); } }
+  .hl-cut { position: absolute; border-radius: 12px; overflow: hidden; opacity: 0; transition: opacity .35s ease; }
+  .hl-cut.on { opacity: 1; }
+  .hl-cut img { position: absolute; width: 390px; height: 844px; }
+
+  /* tap indicator */
+  .tap {
+    position: absolute; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%;
+    background: rgba(255,255,255,.85); box-shadow: 0 4px 14px rgba(0,0,0,.5);
+    opacity: 0; transform: scale(.4);
+  }
+  .tap.go { animation: tap 1.1s ease .7s 2 both; }
+  @keyframes tap {
+    0% { opacity: 0; transform: scale(1.4); }
+    30% { opacity: .95; transform: scale(1); }
+    45% { transform: scale(.78); }
+    70% { opacity: .95; transform: scale(1); }
+    100% { opacity: 0; transform: scale(1); }
+  }
+
+  /* iOS paste callout (step: paste in App Store) */
+  .paste {
+    position: absolute; left: 34px; top: 208px;
+    background: #3a3a3c; color: #fff; font: 600 15px -apple-system, Inter, sans-serif;
+    padding: 9px 16px; border-radius: 9px; opacity: 0; transform: translateY(6px);
+    box-shadow: 0 6px 18px rgba(0,0,0,.5);
+  }
+  .paste:after { content: ""; position: absolute; left: 22px; bottom: -7px; border: 7px solid transparent; border-bottom: 0; border-top-color: #3a3a3c; }
+  .paste.go { animation: paste 3.2s ease .5s both; }
+  @keyframes paste { 0% { opacity: 0; transform: translateY(6px); } 12%, 55% { opacity: 1; transform: none; } 70%, 100% { opacity: 0; } }
+  .typed { overflow: hidden; display: inline-block; vertical-align: bottom; }
+  .typed.go { animation: reveal .01s steps(1) 2.3s both; }
+  @keyframes reveal { from { max-width: 0; } to { max-width: 300px; } }
+
+  /* intro / outro cards */
+  .card { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; opacity: 0; transition: opacity .45s ease; padding: 0 70px; }
+  .card.on { opacity: 1; }
+  .card .k { color: var(--green); font-weight: 800; font-size: 24px; letter-spacing: 3px; text-transform: uppercase; }
+  .card .big { color: var(--ink); font-weight: 800; font-size: 64px; line-height: 1.08; margin-top: 18px; }
+  .card .bigcode {
+    margin-top: 34px; font-weight: 800; font-size: 92px; letter-spacing: 8px; color: var(--green);
+    border: 3px dashed var(--green); border-radius: 26px; padding: 14px 44px; background: var(--green-dim);
+  }
+  .card .small { color: var(--muted); font-size: 26px; margin-top: 30px; font-weight: 500; line-height: 1.45; }
+  .card .stores { display: flex; gap: 16px; margin-top: 36px; }
+  .store { display: flex; align-items: center; gap: 10px; border: 1.5px solid rgba(255,255,255,.3); border-radius: 14px; padding: 12px 22px; color: var(--ink); font-size: 22px; font-weight: 600; }
+  .store svg { width: 26px; height: 26px; fill: var(--ink); }
+  .cards-wrap { position: relative; flex: 1; }
+  .walk { display: contents; }
+  #panel.mode-card .body { display: none; }
+  #panel:not(.mode-card) .cards-wrap { display: none; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="hint">Preview mode · click or press Space to replay</div>
+  <div id="panel">
+    <div class="head">
+      <div class="logo">TVU <b>GO</b></div>
+      <div class="codechip">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#2AC93A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>
+        <span>Code <span class="c" data-code></span> · 1 month free</span>
+      </div>
+    </div>
+
+    <div class="cards-wrap">
+      <div class="card" id="intro">
+        <div class="k">Stream from your phone</div>
+        <div class="big">Get 1 month of<br>TVU Go free</div>
+        <div class="bigcode" data-code></div>
+        <div class="small">Here's how to use my code. It takes about a minute.</div>
+      </div>
+      <div class="card" id="outro">
+        <div class="k">That's it</div>
+        <div class="big">Download TVU Go<br>and use my code</div>
+        <div class="bigcode" data-code></div>
+        <div class="stores">
+          <div class="store"><svg viewBox="0 0 24 24"><path d="M16.4 12.6c0-2.5 2-3.6 2.1-3.7-1.2-1.7-3-1.9-3.6-2-1.5-.2-3 .9-3.8.9-.8 0-2-.9-3.3-.8-1.7 0-3.3 1-4.2 2.5-1.8 3.1-.5 7.7 1.3 10.2.8 1.2 1.8 2.6 3.1 2.5 1.3-.1 1.7-.8 3.3-.8s2 .8 3.3.8c1.4 0 2.2-1.2 3.1-2.5 1-1.4 1.4-2.8 1.4-2.9-.1 0-2.7-1-2.7-4.2zM13.9 5.2c.7-.8 1.2-2 1-3.2-1 0-2.2.7-2.9 1.5-.6.7-1.2 1.9-1 3.1 1.1.1 2.2-.6 2.9-1.4z"/></svg>App Store</div>
+          <div class="store"><svg viewBox="0 0 24 24"><path d="M3.6 2.3c-.2.2-.3.6-.3 1v17.4c0 .4.1.8.3 1l9.6-9.7-9.6-9.7zm10.6 10.7 2.7 2.7-11.8 6.7 9.1-9.4zm0-2 -9.1-9.4 11.8 6.7-2.7 2.7zm3.8-1.7 3 1.7c.9.5.9 1.3 0 1.8l-3 1.7-3-3 3-2.2z"/></svg>Google Play</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="body">
+      <div class="copy" id="copy">
+        <div class="stepno" id="stepno"></div>
+        <div class="title" id="title"></div>
+        <div class="sub" id="sub"></div>
+        <div class="warn" id="warn"></div>
+        <div class="dots" id="dots"></div>
+      </div>
+      <div class="phone"><div class="screen" id="screen"></div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const q = new URLSearchParams(location.search);
+  const CODE = (q.get('code') || 'GOCASH').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 16);
+  const SIDE = q.get('side') === 'left' ? 'left' : 'right';
+  const SCALE = Math.min(1.2, Math.max(.4, parseFloat(q.get('scale') || '1') || 1));
+  const EVERY = Math.max(0, parseFloat(q.get('every') || '0') || 0);
+  const LOOP = q.get('loop') === '1';
+  const FREEZE = q.has('step') ? parseInt(q.get('step'), 10) : null;
+
+  if (SIDE === 'left') document.body.classList.add('left');
+  if (!window.obsstudio && !q.has('step')) document.body.classList.add('preview');
+  const panel = document.getElementById('panel');
+  panel.style.setProperty('--s', SCALE);
+  document.querySelectorAll('[data-code]').forEach(el => el.textContent = CODE);
+
+  // Text patches put the creator's code into the Figma screenshots (coords are in 390x844 screen space).
+  const P = (x, y, w, h, bg, html, css = '') =>
+    `<div class="patch" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px;background:${bg};${css}">${html}</div>`;
+  const C = `<span style="letter-spacing:.5px">${CODE}</span>`;
+
+  // Each step: screen image, copy, highlight boxes [x0,y0,x1,y1], tap point [x,y], patches.
+  const STEPS = [
+    { card: 'intro', dur: 5 },
+    { img: 's1_signup', dur: 6.5,
+      title: 'Download TVU Go and create your account',
+      sub: 'Sign up with <b>Google, Apple, Twitch, Facebook</b> or email.',
+      hl: [[46, 340, 344, 612]] },
+    { img: 'c1', dur: 6.5,
+      title: 'Tap <span class="c">“Have a promo code?”</span>',
+      sub: 'It\'s on the plans screen, right under the trial button.',
+      hl: [[104, 696, 286, 728]], tap: [195, 712] },
+    { img: 'f03', dur: 7,
+      title: `Type <span class="c">${CODE}</span> and tap Apply code`,
+      sub: 'Your free month replaces the regular 3-day trial.',
+      hl: [[22, 660, 368, 770]], tap: [195, 750],
+      patch: P(30, 674, 200, 30, '#000', `<span style="color:#fff;font-weight:700;font-size:19px;letter-spacing:1.6px;padding-left:12px">${CODE}</span>`) },
+    { img: 'f02b', dur: 7,
+      title: 'Pick a plan and tap <span class="c">“Claim 1 month free”</span>',
+      sub: 'TVU Go <b>copies a code for you</b> and opens the store.',
+      hl: [[20, 562, 370, 606]], tap: [287, 586],
+      patch: P(48, 104, 312, 46, '#2b2b2b', `<span style="color:#fff;font-weight:700;font-size:13.6px;line-height:1.3;white-space:normal">Promo code ${C} applied. Pick a plan to claim your free month.</span>`)
+           + P(70, 184, 250, 22, '#061609', `<span style="color:#fff;font-weight:700;font-size:15.4px">Promo code <span style="color:#2AC93A">${CODE}</span> applied</span>`) },
+    { img: 'f05', dur: 8, paste: true,
+      title: 'iPhone: <span class="c">paste</span> the code and tap Redeem',
+      sub: 'Tap the box, choose <b>Paste</b>, then tap <b>Redeem</b> at the top.',
+      warn: 'Paste the code TVU Go copied for you, not the creator code.',
+      hl: [[20, 252, 370, 306], [296, 160, 374, 190]], tap: [335, 175],
+      patch: P(18, 54, 354, 40, '#000', '') + P(20, 318, 350, 40, '#1c1c1e', '') + P(30, 262, 220, 34, '#2c2c2e', '') },
+    { img: 'and', dur: 8,
+      title: 'Android: redeem it in <span class="c">Google Play</span>',
+      sub: 'Tap your payment method, choose <b>Redeem code</b>, paste, then tap <b>Redeem</b>.',
+      warn: 'Don\'t tap Subscribe first, or you\'ll pay full price.',
+      hl: [[24, 280, 366, 694]] },
+    { img: 'f06', dur: 6.5,
+      title: 'You\'re all set. <span class="c">Go live!</span>',
+      sub: 'Your free month is active. Tap <b>Start streaming</b>.',
+      hl: [[48, 520, 342, 554]], tap: [195, 537],
+      patch: P(146, 378, 200, 22, '#1f1f1f', `<span style="margin-left:auto;color:#fff;font-weight:500;font-size:14.8px">1 month · code ${CODE}</span>`)
+           + P(86, 589, 200, 22, '#1f1f1f', `<span style="color:#fff;font-weight:700;font-size:15px">Promo code ${CODE}</span>`) },
+    { card: 'outro', dur: 7 },
+  ];
+  const WALK = STEPS.filter(s => s.img);
+
+  // build phone frames once
+  const screen = document.getElementById('screen');
+  WALK.forEach((s, i) => {
+    const f = document.createElement('div');
+    f.className = 'frame'; f.dataset.i = i;
+    let h = `<img src="assets/${s.img}.png" alt="">${s.patch || ''}<div class="dim"></div>`;
+    (s.hl || []).forEach(b => {
+      const [x0, y0, x1, y1] = b, pad = 5;
+      h += `<div class="hl-cut" style="left:${x0 - pad}px;top:${y0 - pad}px;width:${x1 - x0 + pad * 2}px;height:${y1 - y0 + pad * 2}px">`
+         + `<div style="position:absolute;left:${-(x0 - pad)}px;top:${-(y0 - pad)}px;width:390px;height:844px"><img src="assets/${s.img}.png" alt="">${s.patch || ''}</div></div>`;
+      h += `<div class="hl-box" style="left:${x0 - pad}px;top:${y0 - pad}px;width:${x1 - x0 + pad * 2 - 6}px;height:${y1 - y0 + pad * 2 - 6}px"></div>`;
+    });
+    if (s.paste) {
+      h += `<div class="paste">Paste</div>`;
+      h += `<div class="patch typed" style="left:34px;top:265px;height:28px;background:#2c2c2e;max-width:0">`
+         + `<span style="color:#fff;font:600 19px -apple-system,Inter,sans-serif;letter-spacing:1.4px;padding:0 6px">TVUGO-UM</span></div>`;
+    }
+    if (s.tap) h += `<div class="tap" style="left:${s.tap[0]}px;top:${s.tap[1]}px"></div>`;
+    f.innerHTML = h;
+    screen.appendChild(f);
+  });
+
+  const dots = document.getElementById('dots');
+  dots.innerHTML = WALK.map(() => '<div class="dot"><i></i></div>').join('');
+
+  let timers = [];
+  const later = (fn, ms) => timers.push(setTimeout(fn, ms));
+  const clear = () => { timers.forEach(clearTimeout); timers = []; };
+
+  function show(idx, frozen) {
+    const s = STEPS[idx];
+    const intro = document.getElementById('intro'), outro = document.getElementById('outro');
+    intro.classList.toggle('on', s.card === 'intro');
+    outro.classList.toggle('on', s.card === 'outro');
+    panel.classList.toggle('mode-card', !!s.card);
+    if (s.card) return;
+
+    const wi = WALK.indexOf(s);
+    // copy
+    const copy = document.getElementById('copy');
+    copy.classList.remove('copy-anim'); void copy.offsetWidth; copy.classList.add('copy-anim');
+    document.getElementById('stepno').textContent = `Step ${wi + 1} of ${WALK.length}`;
+    document.getElementById('title').innerHTML = s.title;
+    document.getElementById('sub').innerHTML = s.sub;
+    const w = document.getElementById('warn');
+    w.innerHTML = s.warn || ''; w.classList.toggle('on', !!s.warn);
+    // dots
+    [...dots.children].forEach((d, i) => {
+      d.className = 'dot' + (i < wi ? ' done' : i === wi ? (frozen ? ' done' : ' now') : '');
+      d.style.setProperty('--d', s.dur + 's');
+      const bar = d.firstElementChild; bar.style.animation = 'none'; void bar.offsetWidth; bar.style.animation = '';
+    });
+    // phone
+    screen.querySelectorAll('.frame').forEach(f => {
+      const on = +f.dataset.i === wi;
+      f.classList.toggle('on', on);
+      f.classList.remove('hl');
+      f.querySelectorAll('.hl-box,.hl-cut').forEach(e => e.classList.remove('on'));
+      f.querySelectorAll('.tap,.paste,.typed').forEach(e => e.classList.remove('go'));
+      if (!on) return;
+      const go = () => {
+        f.classList.add('hl');
+        f.querySelectorAll('.hl-box,.hl-cut').forEach(e => e.classList.add('on'));
+        f.querySelectorAll('.tap,.paste,.typed').forEach(e => { void e.offsetWidth; e.classList.add('go'); });
+      };
+      if (frozen) { go(); f.querySelectorAll('.typed').forEach(e => { e.classList.remove('go'); e.style.maxWidth = '300px'; }); }
+      else later(go, 900);
+    });
+  }
+
+  function play() {
+    clear();
+    panel.classList.add('in');
+    let t = 0;
+    STEPS.forEach((s, i) => { later(() => show(i), t * 1000); t += s.dur; });
+    later(() => panel.classList.remove('in'), t * 1000);
+    if (LOOP) later(play, t * 1000 + 1500);
+    else if (EVERY > 0) later(play, EVERY * 60000);
+  }
+
+  // preload images, then start
+  const urls = [...new Set(WALK.map(s => `assets/${s.img}.png`))];
+  Promise.all(urls.map(u => new Promise(r => { const im = new Image(); im.onload = im.onerror = r; im.src = u; })))
+    .then(() => (document.fonts ? document.fonts.ready : Promise.resolve()))
+    .then(() => {
+      if (FREEZE !== null && STEPS[FREEZE]) { panel.style.transition = 'none'; panel.classList.add('in'); show(FREEZE, true); return; }
+      play();
+    });
+
+  // manual replay in a normal browser (OBS: toggle the source instead)
+  addEventListener('keydown', e => { if (e.code === 'Space') play(); });
+  addEventListener('click', play);
+})();
+</script>
+</body>
+</html>
